@@ -493,6 +493,16 @@ class LitServer:
             - Use when serving hundreds of requests per second
             - Not supported on Windows
 
+        transport_type:
+            Transport mechanism for inter-process communication. Defaults to "mp".
+
+            - "mp": Multiprocessing.Queue (default, reliable)
+            - "zmq": ZeroMQ (high throughput >100 RPS)
+            - "iceoryx2": Zero-copy shared memory (ultra-low latency, experimental)
+
+            Note: If both `fast_queue` and `transport_type` are set, `transport_type` takes precedence.
+            ZMQ and iceoryx2 are not supported on Windows.
+
         track_requests:
             Track active requests across all API servers for monitoring and load management. Defaults to False.
 
@@ -717,6 +727,7 @@ class LitServer:
         middlewares: Optional[list[Union[Callable, tuple[Callable, dict]]]] = None,
         loggers: Optional[Union[Logger, list[Logger]]] = None,
         fast_queue: bool = False,
+        transport_type: Literal["mp", "zmq", "iceoryx2"] = "mp",
         disable_openapi_url: bool = False,
         # All the following arguments are deprecated and will be removed in v0.3.0
         max_batch_size: Optional[int] = None,
@@ -812,9 +823,28 @@ class LitServer:
         except (TypeError, ValueError):
             raise ValueError("model_metadata must be JSON serializable.")
 
-        if sys.platform == "win32" and fast_queue:
-            warnings.warn("ZMQ is not supported on Windows with LitServe. Disabling ZMQ.")
-            fast_queue = False
+        # Handle platform constraints for transports
+        if sys.platform == "win32":
+            if transport_type == "zmq":
+                warnings.warn("ZMQ is not supported on Windows with LitServe. Falling back to MPQueue.")
+                transport_type = "mp"
+            elif transport_type == "iceoryx2":
+                warnings.warn("Iceoryx2 is not supported on Windows with LitServe. Falling back to MPQueue.")
+                transport_type = "mp"
+            elif fast_queue:
+                warnings.warn("ZMQ is not supported on Windows with LitServe. Disabling ZMQ.")
+                fast_queue = False
+
+        # Determine final transport type (transport_type takes precedence over fast_queue)
+        if transport_type == "mp":
+            final_transport_type = "mp"
+        elif transport_type == "zmq":
+            final_transport_type = "zmq"
+        elif transport_type == "iceoryx2":
+            final_transport_type = "iceoryx2"
+        else:
+            # Backward compatibility: use fast_queue if transport_type is default
+            final_transport_type = "zmq" if fast_queue else "mp"
 
         self.healthcheck_path = healthcheck_path
         self.info_path = info_path
@@ -865,7 +895,7 @@ class LitServer:
                 device_list = range(devices)
             self.devices = [self.device_identifiers(accelerator, device) for device in device_list]
 
-        self.transport_config = TransportConfig(transport_config="zmq" if self.use_zmq else "mp")
+        self.transport_config = TransportConfig(transport_type=final_transport_type)
         self.register_endpoints()
         # register middleware
         self._register_middleware()

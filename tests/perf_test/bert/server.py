@@ -48,6 +48,7 @@ def main(
     batch_timeout: float = 0.01,
     devices: int = 2,
     workers_per_device=2,
+    transport_type: str = "zmq",
 ):
     print(locals())
     api = HuggingFaceLitAPI(
@@ -60,7 +61,7 @@ def main(
         accelerator="auto",
         devices=devices,
         timeout=200,
-        fast_queue=True,
+        transport_type=transport_type,
     )
     server.run(log_level="warning", num_api_servers=4, generate_client_file=False)
 
